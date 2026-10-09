@@ -3,18 +3,22 @@ const Users = require('../../../admin/users/models/usersModel');
 const Group = require('../../../admin/groups/models/groupModel');
 const tokenService = require('../../../../services/tokenService');
 const emailService = require('../../../../services/emailService');
+const smsService = require('../../../../services/smsService');
 const Membership = require('../../../admin/memberships/models/membershipsModel');
 
 class LoginController extends BaseController {
   async sendOtp(req, res) {
     try {
-      const { email } = req.body;
+      const { identifier } = req.body;
       
-      if (!email) {
-        return this.error(res, 'Email ID is required', 400);
+      if (!identifier) {
+        return this.error(res, 'Email or Mobile is required', 400);
       }
 
-      const user = await Users.findOne({ email, isActive: true });
+      const user = await Users.findOne({ 
+        $or: [{ email: identifier }, { mobile: identifier }],
+        isActive: true 
+      });
       if (!user) {
         return this.error(res, 'User not found or inactive', 404);
       }
@@ -29,12 +33,27 @@ class LoginController extends BaseController {
       user.otpExpiry = otpExpiry;
       await user.save();
 
-      // Send the OTP via Email
-      const emailSubject = 'Your OTP for Login';
-      const emailHtml = `<p>Your OTP is: <strong>${otp}</strong></p><p>It will expire in 5 minutes.</p>`;
-      await emailService.sendEmail(user.email, emailSubject, emailHtml);
+      const isEmail = identifier.includes('@');
       
-      this.success(res, { message: 'OTP sent successfully to your email' }, 'OTP Sent');
+      if (isEmail) {
+        // Send the OTP via Email
+        const emailSubject = 'Your OTP for Login';
+        const emailHtml = `<p>Your OTP is: <strong>${otp}</strong></p><p>It will expire in 5 minutes.</p>`;
+        await emailService.sendEmail(user.email, emailSubject, emailHtml);
+        this.success(res, { message: 'OTP sent successfully to your email' }, 'OTP Sent');
+      } else {
+        // Send the OTP via SMS (fire and catch errors independently so OTP is still usable)
+        const smsMessage = `Dear Customer, ${otp} is the one-time password to login Sree Ganesh Textiles Website. DO NOT share this OTP with anyone.`;
+        const templateId = '1207164761534449053';
+        try {
+          await smsService.sendSms(user.mobile, smsMessage, templateId);
+        } catch (smsError) {
+          // Log but do not fail — OTP is already saved in DB and is valid
+          const logger = require('../../../../services/logger');
+          logger.error(`SMS send failed for ${user.mobile}: ${smsError.message}`);
+        }
+        this.success(res, { message: 'OTP sent successfully to your mobile' }, 'OTP Sent');
+      }
     } catch (error) {
       this.error(res, error.message, 500);
     }
@@ -42,13 +61,16 @@ class LoginController extends BaseController {
 
   async verifyOtp(req, res) {
     try {
-      const { email, otp } = req.body;
+      const { identifier, otp } = req.body;
 
-      if (!email || !otp) {
-        return this.error(res, 'Email ID and OTP are required', 400);
+      if (!identifier || !otp) {
+        return this.error(res, 'Email/Mobile and OTP are required', 400);
       }
 
-      const user = await Users.findOne({ email, isActive: true });
+      const user = await Users.findOne({ 
+        $or: [{ email: identifier }, { mobile: identifier }],
+        isActive: true 
+      });
       if (!user) {
         return this.error(res, 'User not found or inactive', 404);
       }
