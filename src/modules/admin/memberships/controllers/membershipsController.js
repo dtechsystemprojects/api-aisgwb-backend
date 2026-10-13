@@ -1,3 +1,4 @@
+const Transactions = require('../../transactions/models/transactionsModel');
 const Membership = require('../models/membershipsModel');
 const User = require('../../users/models/usersModel');
 const emailService = require('../../../../services/emailService');
@@ -136,6 +137,101 @@ class MembershipsController {
     } catch (error) {
       console.error('Error updating membership status:', error);
       res.status(500).json({ success: false, message: 'Failed to update status', error: error.message });
+    }
+  }
+  async delete(req, res) {
+    try {
+      const { id } = req.params;
+      const membership = await Membership.findById(id);
+      if (!membership) {
+        return res.status(404).json({ success: false, message: 'Membership not found' });
+      }
+
+      // Check if any transactions exist against this membership user ID or transactionRef
+      const txnQuery = {
+        $or: [
+          ...(membership.userId ? [{ userId: membership.userId }] : []),
+          ...(membership.transactionRef ? [{ transactionRef: membership.transactionRef }] : [])
+        ]
+      };
+
+      if (txnQuery.$or.length > 0) {
+        const txnCount = await Transactions.countDocuments(txnQuery);
+        if (txnCount > 0) {
+          return res.status(400).json({
+            success: false,
+            message: `Cannot delete membership for "${membership.name}": ${txnCount} transaction record(s) exist against this user.`
+          });
+        }
+      }
+
+      await Membership.findByIdAndDelete(id);
+      res.status(200).json({
+        success: true,
+        message: 'Membership deleted successfully',
+      });
+    } catch (error) {
+      console.error('Error deleting membership:', error);
+      res.status(500).json({ success: false, message: 'Failed to delete membership', error: error.message });
+    }
+  }
+
+  async bulkDelete(req, res) {
+    try {
+      const { ids } = req.body;
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return res.status(400).json({ success: false, message: 'No membership IDs provided' });
+      }
+
+      const memberships = await Membership.find({ _id: { $in: ids } });
+      if (memberships.length === 0) {
+        return res.status(404).json({ success: false, message: 'No memberships found to delete' });
+      }
+
+      // Check which memberships have transactions against their userId or transactionRef
+      const blockedMemberships = [];
+      const deletableIds = [];
+
+      for (const m of memberships) {
+        const txnQuery = {
+          $or: [
+            ...(m.userId ? [{ userId: m.userId }] : []),
+            ...(m.transactionRef ? [{ transactionRef: m.transactionRef }] : [])
+          ]
+        };
+
+        let hasTransactions = false;
+        if (txnQuery.$or.length > 0) {
+          const count = await Transactions.countDocuments(txnQuery);
+          if (count > 0) {
+            hasTransactions = true;
+          }
+        }
+
+        if (hasTransactions) {
+          blockedMemberships.push(m.name || m.email || m._id);
+        } else {
+          deletableIds.push(m._id);
+        }
+      }
+
+      if (blockedMemberships.length > 0) {
+        return res.status(400).json({
+          success: false,
+          message: `Transaction record(s) exist against user(s) (${blockedMemberships.join(', ')}). Delete not allowed when transactions exist.`
+        });
+      }
+
+      await Membership.deleteMany({ _id: { $in: deletableIds } });
+
+      res.status(200).json({
+        success: true,
+        deletedCount: deletableIds.length,
+        message: `${deletableIds.length} membership(s) deleted successfully`,
+      });
+    } catch (error) {
+      console.error('Error bulk deleting memberships:', error);
+      res.status(500).json({ success: false, message: 'Failed to bulk delete memberships', error: error.message });
     }
   }
 }

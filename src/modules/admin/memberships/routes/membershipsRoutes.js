@@ -9,4 +9,8 @@ router.get('/', authenticate, permission(config, 'READ'), membershipsController.
 router.patch('/:id/status', authenticate, permission(config, 'WRITE'), membershipsController.updateStatus);
 router.get('/:userId', authenticate, permission(config, 'READ'), membershipsController.getById);
 
+router.post('/bulk-delete', authenticate, membershipsController.bulkDelete.bind(membershipsController));
+router.delete('/:id', authenticate, membershipsController.delete.bind(membershipsController));
+
 module.exports = router;
+
