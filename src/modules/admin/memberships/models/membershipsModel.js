@@ -24,7 +24,7 @@ const membershipsSchema = new mongoose.Schema({
   },
   centralMembershipId: {
     type: String,
-    required: true
+    required: false
   },
   stateMembershipId: {
     type: String
