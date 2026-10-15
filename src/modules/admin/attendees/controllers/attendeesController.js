@@ -110,14 +110,7 @@ async function generateTicketPdf(outputPath, { attendee, event, booking, user, l
       const stream = fs.createWriteStream(outputPath);
       doc.pipe(stream);
 
-      const baseUrl =
-        process.env.NEXT_PUBLIC_BASE_URL ||
-        process.env.BASE_URL ||
-        (settings?.websiteUrl
-          ? settings.websiteUrl.startsWith('http')
-            ? settings.websiteUrl
-            : `https://${settings.websiteUrl}`
-          : 'https://booking.aisgwb.org');
+      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://booking.aisgwb.org';
       const normalizedBaseUrl = String(baseUrl).replace(/\/+$/, '');
       const attendeeId = attendee._id || attendee.id || 'temp';
       const eventId = event?._id || event?.id || '';
