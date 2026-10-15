@@ -44,6 +44,8 @@ async function connectMongoDB() {
 
         logger.info('✅ MongoDB connected successfully');
 
+        // Cron is triggered externally via GET/POST /api/cron/process-bookings
+
     } catch (error) {
 
         logger.error('❌ MongoDB connection error:', error.message);

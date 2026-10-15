@@ -11,7 +11,8 @@
     "lint": "eslint src/",
     "make": "node cli.js",
     "migrate": "node src/database/migrate.js",
-    "seed": "node src/database/seed.js"
+    "seed": "node src/database/seed.js",
+    "cron": "node src/cron/bookingCron.js"
   },
   "keywords": [
     "nodejs",
@@ -35,8 +36,10 @@
     "mongoose": "^7.0.0",
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
+    "node-cron": "^4.6.0",
     "nodemailer": "^6.9.1",
     "pdfkit": "^0.20.1",
+    "qrcode": "^1.5.4",
     "razorpay": "^2.9.8",
     "redis": "^4.6.5",
     "uuid": "^9.0.0",

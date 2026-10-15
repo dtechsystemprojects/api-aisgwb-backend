@@ -19,10 +19,21 @@ class EventsController {
     }
   }
 
-  async getEventDetails(req, res) {
+    async getEventDetails(req, res) {
     try {
       const { id } = req.params;
-      const event = await Events.findById(id);
+      const mongoose = require('mongoose');
+      let event = null;
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        event = await Events.findById(id);
+      }
+      if (!event) {
+        event = await Events.findOne({ slug: id });
+      }
+      if (!event && !mongoose.Types.ObjectId.isValid(id)) {
+        // try finding by _id as string fallback
+        event = await Events.findOne({ _id: id }).catch(() => null);
+      }
       
       if (!event) {
         return res.status(404).json({
@@ -63,7 +74,15 @@ class EventsController {
 
   async getEventTickets(req, res) {
     try {
-      const { eventId } = req.params;
+      let { eventId } = req.params;
+      const mongoose = require('mongoose');
+
+      if (!mongoose.Types.ObjectId.isValid(eventId)) {
+        const foundEvent = await Events.findOne({ slug: eventId });
+        if (foundEvent) {
+          eventId = foundEvent._id.toString();
+        }
+      }
       
 
       const ticketQuery = { eventId: eventId, isActive: true };
@@ -75,7 +94,10 @@ class EventsController {
       const attendeeCounts = await Attendee.aggregate([
         {
           $match: {
-            eventId: eventId,
+            $or: [
+              { eventId: eventId },
+              { eventId: mongoose.Types.ObjectId.isValid(eventId) ? new mongoose.Types.ObjectId(eventId) : eventId }
+            ],
             ticketStatus: { $ne: 'Cancelled' }
           }
         },

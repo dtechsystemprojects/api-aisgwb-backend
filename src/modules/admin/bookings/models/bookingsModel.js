@@ -38,7 +38,11 @@ const bookingsSchema = new mongoose.Schema(
       type: String, 
       enum: ['Confirmed', 'Cancelled'], 
       default: 'Confirmed' 
-    }
+    },
+    emailSent: { type: Boolean, default: false },
+    emailSentAt: { type: Date },
+    emailError: { type: String },
+    invoicePdfUrl: { type: String }
   },
   { timestamps: true }
 );
@@ -47,3 +51,4 @@ bookingsSchema.index({ eventId: 1 });
 bookingsSchema.index({ userId: 1 });
 
 module.exports = mongoose.model('Bookings', bookingsSchema);
+

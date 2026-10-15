@@ -126,6 +126,16 @@ class CheckoutController {
       });
       await transaction.save();
 
+      // Trigger instant invoice & ticket generation + email delivery in background
+      try {
+        const cronController = require('../../../cron/controllers/cronController');
+        cronController.processSingleBooking(savedBooking._id).catch(e => {
+          console.error('[Checkout] Background invoice/ticket processing error:', e.message);
+        });
+      } catch (cronErr) {
+        console.error('[Checkout] Could not trigger cronController:', cronErr.message);
+      }
+
       res.status(200).json({ 
         success: true, 
         message: 'Payment verified and booking saved successfully',

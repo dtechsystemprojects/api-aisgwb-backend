@@ -1,11 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const eventsController = require('../controllers/eventsController');
-const { tokenAuth } = require('../../../../middlewares');
 
+// Public endpoints - no tokenAuth required so event details and tickets can be viewed by anyone
 router.get('/', eventsController.getEvents.bind(eventsController));
-router.get('/attendees', tokenAuth, eventsController.getAttendees.bind(eventsController));
-router.get('/tickets/:eventId', tokenAuth, eventsController.getEventTickets.bind(eventsController));
-router.get('/:id', tokenAuth, eventsController.getEventDetails.bind(eventsController));
+router.get('/attendees', eventsController.getAttendees.bind(eventsController));
+router.get('/tickets/:eventId', eventsController.getEventTickets.bind(eventsController));
+router.get('/:id', eventsController.getEventDetails.bind(eventsController));
 
 module.exports = router;

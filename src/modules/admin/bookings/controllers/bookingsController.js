@@ -58,7 +58,7 @@ class BookingsController extends BaseController {
       const { id } = req.params;
       const { pdfBase64 } = req.body;
       const data = await BookingsService.resendInvoice(id, pdfBase64);
-      this.success(res, data, 'Invoice sent successfully');
+      this.success(res, data, data?.message || 'Invoice sent successfully');
     } catch (error) {
       console.error("BOOKINGS_CONTROLLER_ERROR:", error); this.error(res, error.message, 400);
     }

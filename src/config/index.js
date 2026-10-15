@@ -22,8 +22,8 @@ module.exports = {
     host: process.env.MAIL_HOST,
     port: parseInt(process.env.MAIL_PORT, 10) || 587,
     user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,
-    from: process.env.MAIL_FROM,
+    pass: process.env.MAIL_PASS || process.env.MAIL_PASSWORD,
+    from: process.env.MAIL_FROM || process.env.MAIL_USER,
     secure: process.env.MAIL_SECURE || false,
     enabled: process.env.MAIL_SEND_ENABLED !== 'false',
   },
@@ -33,7 +33,7 @@ module.exports = {
     db: parseInt(process.env.REDIS_DB, 10) || 0,
   },
   cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    origin: (origin, callback) => callback(null, true),
     credentials: true,
   },
 };
