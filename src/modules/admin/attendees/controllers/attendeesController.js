@@ -1,4 +1,6 @@
+const mongoose = require('mongoose');
 const Attendee = require('../models/attendeesModel');
+const Bookings = require('../../bookings/models/bookingsModel');
 const settingsService = require('../../settings/services/settingsService');
 const logger = require('../../../../services/logger');
 const PDFDocument = require('pdfkit');
@@ -434,21 +436,135 @@ exports.getAttendees = async (req, res, next) => {
 // Get single attendee
 exports.getAttendeeById = async (req, res, next) => {
   try {
-    const attendee = await Attendee.findById(req.params.id)
-      .populate('eventId', 'title')
-      .populate('ticketId', 'ticketName ticketPrice')
-      .populate({
-        path: 'bookingId',
-        select: 'userId billingInfo tickets',
-        populate: {
-          path: 'userId',
-          select: 'name memberId',
+    const { id } = req.params;
+    let attendee = null;
+
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      // 1. Direct search by Attendee document ID
+      attendee = await Attendee.findById(id)
+        .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+        .populate('ticketId', 'ticketName ticketPrice')
+        .populate({
+          path: 'bookingId',
+          select: 'userId billingInfo tickets paymentStatus totalAmount',
+          populate: {
+            path: 'userId',
+            select: 'name memberId email phone mobile',
+          },
+        });
+
+      // 2. Fallback: Search if id is a subdocument ID in Bookings (tickets.attendees._id)
+      if (!attendee) {
+        const booking = await Bookings.findOne({ 'tickets.attendees._id': id })
+          .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+          .populate({
+            path: 'userId',
+            select: 'name memberId email phone mobile',
+          });
+
+        if (booking) {
+          let targetAttendee = null;
+          let targetTicket = null;
+          for (const t of booking.tickets) {
+            const att = t.attendees.find((a) => a._id?.toString() === id.toString());
+            if (att) {
+              targetAttendee = att;
+              targetTicket = t;
+              break;
+            }
+          }
+
+          if (targetAttendee) {
+            // Find in Attendee collection by bookingId and attendee name
+            attendee = await Attendee.findOne({
+              bookingId: booking._id,
+              name: targetAttendee.name,
+            })
+              .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+              .populate('ticketId', 'ticketName ticketPrice')
+              .populate({
+                path: 'bookingId',
+                select: 'userId billingInfo tickets paymentStatus totalAmount',
+                populate: {
+                  path: 'userId',
+                  select: 'name memberId email phone mobile',
+                },
+              });
+
+            // If still not found in Attendee collection, synthesize / create record
+            if (!attendee) {
+              try {
+                const created = await Attendee.create({
+                  bookingId: booking._id,
+                  eventId: booking.eventId?._id || booking.eventId,
+                  name: targetAttendee.name,
+                  age: targetAttendee.age,
+                  relation: targetAttendee.relation,
+                  ticketId: targetTicket.ticketId,
+                  ticketName: targetTicket.ticketName,
+                  ticketPrice: targetTicket.price || 0,
+                  ticketStatus: targetAttendee.ticketStatus || 'Unused',
+                  paymentStatus:
+                    booking.paymentStatus === 'Completed' || booking.paymentStatus === 'Free'
+                      ? 'Success'
+                      : booking.paymentStatus,
+                });
+                attendee = await Attendee.findById(created._id)
+                  .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+                  .populate('ticketId', 'ticketName ticketPrice')
+                  .populate({
+                    path: 'bookingId',
+                    select: 'userId billingInfo tickets paymentStatus totalAmount',
+                    populate: {
+                      path: 'userId',
+                      select: 'name memberId email phone mobile',
+                    },
+                  });
+              } catch (createErr) {
+                logger.warn('Could not auto-create attendee document:', createErr.message);
+              }
+            }
+          }
         }
-      });
-      
+      }
+
+      // 3. Fallback: Search if id is a bookingId directly
+      if (!attendee) {
+        const bookingById = await Bookings.findById(id)
+          .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+          .populate({
+            path: 'userId',
+            select: 'name memberId email phone mobile',
+          });
+        if (bookingById) {
+          attendee = await Attendee.findOne({ bookingId: bookingById._id })
+            .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+            .populate('ticketId', 'ticketName ticketPrice')
+            .populate({
+              path: 'bookingId',
+              select: 'userId billingInfo tickets paymentStatus totalAmount',
+              populate: {
+                path: 'userId',
+                select: 'name memberId email phone mobile',
+              },
+            });
+        }
+      }
+    }
+
     if (!attendee) {
       return res.status(404).json({ success: false, message: 'Attendee not found' });
     }
+
+    // Ensure paymentStatus is consistent with booking
+    if (
+      attendee.bookingId &&
+      (attendee.paymentStatus === 'Pending' || !attendee.paymentStatus) &&
+      (attendee.bookingId.paymentStatus === 'Completed' || attendee.bookingId.paymentStatus === 'Free')
+    ) {
+      attendee.paymentStatus = 'Success';
+    }
+
     return res.status(200).json({ success: true, data: attendee });
   } catch (error) {
     logger.error('Error fetching attendee:', error);
@@ -459,21 +575,59 @@ exports.getAttendeeById = async (req, res, next) => {
 // Update attendee
 exports.updateAttendee = async (req, res, next) => {
   try {
-    const attendee = await Attendee.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    })
-      .populate('eventId', 'title')
-      .populate('ticketId', 'ticketName ticketPrice')
-      .populate({
-        path: 'bookingId',
-        select: 'userId billingInfo',
-        populate: {
-          path: 'userId',
-          select: 'name memberId',
+    const { id } = req.params;
+    let attendee = null;
+
+    if (mongoose.Types.ObjectId.isValid(id)) {
+      attendee = await Attendee.findByIdAndUpdate(id, req.body, {
+        new: true,
+        runValidators: true,
+      })
+        .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+        .populate('ticketId', 'ticketName ticketPrice')
+        .populate({
+          path: 'bookingId',
+          select: 'userId billingInfo tickets paymentStatus totalAmount',
+          populate: {
+            path: 'userId',
+            select: 'name memberId email phone mobile',
+          },
+        });
+    }
+
+    // If not found directly, check if id is a subdoc id in Bookings
+    if (!attendee && mongoose.Types.ObjectId.isValid(id)) {
+      const booking = await Bookings.findOne({ 'tickets.attendees._id': id });
+      if (booking) {
+        for (const t of booking.tickets) {
+          const att = t.attendees.find((a) => a._id?.toString() === id.toString());
+          if (att) {
+            attendee = await Attendee.findOneAndUpdate(
+              { bookingId: booking._id, name: att.name },
+              req.body,
+              { new: true, runValidators: true }
+            )
+              .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+              .populate('ticketId', 'ticketName ticketPrice')
+              .populate({
+                path: 'bookingId',
+                select: 'userId billingInfo tickets paymentStatus totalAmount',
+                populate: {
+                  path: 'userId',
+                  select: 'name memberId email phone mobile',
+                },
+              });
+
+            if (req.body.ticketStatus) {
+              att.ticketStatus = req.body.ticketStatus;
+              await booking.save();
+            }
+            break;
+          }
         }
-      });
-    
+      }
+    }
+
     if (!attendee) {
       return res.status(404).json({ success: false, message: 'Attendee not found' });
     }
