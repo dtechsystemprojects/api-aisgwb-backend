@@ -12,7 +12,7 @@ class CronController {
   /**
    * Process invoice and ticket emailing for a single booking:
    * 1. Calls bookingsController.resendInvoice method
-   * 2. Calls attendeesController.resendTicket method for each attendee
+   * 2. Calls attendeesController.resendBulkTicket method to send all tickets in one email
    * 3. Updates MongoDB booking document with emailSent: true
    */
   async processSingleBooking(bookingId) {
@@ -71,44 +71,43 @@ class CronController {
         logger.info(`[CronController] Booking ${booking._id} price == 0 (Free booking). No invoice generated or sent.`);
       }
 
-      // 2. Call attendeesController.resendTicket method for each attendee
+      // 2. Call attendeesController.resendBulkTicket method to send all tickets in ONE email
       let ticketSuccessCount = 0;
       const attendees = await Attendee.find({ bookingId: booking._id });
       if (attendees && attendees.length > 0) {
-        for (const att of attendees) {
-          try {
-            logger.info(`[CronController] Calling attendeesController.resendTicket for attendee ${att._id}...`);
-            await new Promise((resolve, reject) => {
-              const mockReq = {
-                params: { id: String(att._id) },
-                body: {},
-              };
-              const mockRes = {
-                status: function (code) {
-                  this._code = code;
-                  return this;
-                },
-                json: function (data) {
-                  if ((this._code && this._code >= 400) || (data && data.success === false)) {
-                    reject(new Error(data?.message || `attendeesController.resendTicket failed with status ${this._code}`));
-                  } else {
-                    resolve(data);
-                  }
-                },
-              };
-              const mockNext = (err) => {
-                if (err) reject(err);
-                else resolve();
-              };
-              attendeesController.resendTicket(mockReq, mockRes, mockNext).catch(reject);
-            });
-            ticketSuccessCount++;
-            logger.info(`[CronController] Ticket sent successfully for attendee ${att._id}`);
-            // Small pause between multiple attendee ticket emails
-            await new Promise((r) => setTimeout(r, 1000));
-          } catch (tErr) {
-            logger.error(`[CronController] attendeesController.resendTicket failed for attendee ${att._id}: ${tErr.message}`);
-          }
+        const attendeeIds = attendees.map((att) => String(att._id));
+        try {
+          logger.info(`[CronController] Calling attendeesController.resendBulkTicket for ${attendees.length} attendee(s) in booking ${booking._id}...`);
+          await new Promise((resolve, reject) => {
+            const mockReq = {
+              body: {
+                bookingId: String(booking._id),
+                attendeeIds,
+              },
+            };
+            const mockRes = {
+              status: function (code) {
+                this._code = code;
+                return this;
+              },
+              json: function (data) {
+                if ((this._code && this._code >= 400) || (data && data.success === false)) {
+                  reject(new Error(data?.message || `attendeesController.resendBulkTicket failed with status ${this._code}`));
+                } else {
+                  resolve(data);
+                }
+              },
+            };
+            const mockNext = (err) => {
+              if (err) reject(err);
+              else resolve();
+            };
+            attendeesController.resendBulkTicket(mockReq, mockRes, mockNext).catch(reject);
+          });
+          ticketSuccessCount = attendees.length;
+          logger.info(`[CronController] Bulk tickets (${ticketSuccessCount}) sent successfully in one email for booking ${booking._id}`);
+        } catch (tErr) {
+          logger.error(`[CronController] attendeesController.resendBulkTicket failed for booking ${booking._id}: ${tErr.message}`);
         }
       }
 

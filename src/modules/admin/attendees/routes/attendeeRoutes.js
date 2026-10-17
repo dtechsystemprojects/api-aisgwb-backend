@@ -4,6 +4,7 @@ const attendeesController = require("../controllers/attendeesController");
 
 router.post("/", attendeesController.createAttendee);
 router.get("/", attendeesController.getAttendees);
+router.post("/resend-bulk-tickets", attendeesController.resendBulkTicket);
 router.get("/:id", attendeesController.getAttendeeById);
 router.put("/:id", attendeesController.updateAttendee);
 router.delete("/:id", attendeesController.deleteAttendee);

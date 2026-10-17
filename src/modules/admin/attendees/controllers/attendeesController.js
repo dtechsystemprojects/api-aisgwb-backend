@@ -749,3 +749,186 @@ exports.resendTicket = async (req, res, next) => {
     }
   }
 };
+
+// Resend Ticket PDF via Email for Bulk Bookings (all tickets in one email)
+exports.resendBulkTicket = async (req, res, next) => {
+  const generatedTickets = [];
+  try {
+    const { attendeeIds, bookingId } = req.body || {};
+
+    let query = null;
+    if (attendeeIds && Array.isArray(attendeeIds) && attendeeIds.length > 0) {
+      query = { _id: { $in: attendeeIds } };
+    } else if (bookingId) {
+      query = { bookingId };
+    } else if (req.params?.id) {
+      if (mongoose.Types.ObjectId.isValid(req.params.id)) {
+        query = {
+          $or: [{ bookingId: req.params.id }, { _id: req.params.id }],
+        };
+      }
+    }
+
+    if (!query) {
+      return res.status(400).json({ success: false, message: 'Invalid attendee IDs or booking ID' });
+    }
+
+    const attendees = await Attendee.find(query)
+      .populate('eventId', 'title venue venueLocation startDate endDate startTime endTime')
+      .populate('ticketId', 'ticketName ticketPrice')
+      .populate({
+        path: 'bookingId',
+        select: 'userId billingInfo totalAmount paymentStatus tickets',
+        populate: {
+          path: 'userId',
+          select: 'name memberId email phone mobile',
+        },
+      });
+
+    if (!attendees || attendees.length === 0) {
+      return res.status(404).json({ success: false, message: 'Attendees not found' });
+    }
+
+    // Group attendees by recipient email so all tickets for the same recipient are sent in ONE email
+    const emailGroups = new Map();
+
+    for (const attendee of attendees) {
+      const booking = attendee.bookingId;
+      const recipientEmail = booking?.billingInfo?.email || booking?.userId?.email || attendee.email;
+      if (!recipientEmail) {
+        logger.warn(`[resendBulkTicket] No recipient email found for attendee ${attendee._id}`);
+        continue;
+      }
+
+      if (!emailGroups.has(recipientEmail)) {
+        emailGroups.set(recipientEmail, {
+          email: recipientEmail,
+          booking,
+          attendees: [],
+        });
+      }
+      emailGroups.get(recipientEmail).attendees.push(attendee);
+    }
+
+    if (emailGroups.size === 0) {
+      return res.status(400).json({ success: false, message: 'No valid recipient email address found for the attendees' });
+    }
+
+    const settings = await getGeneralSettings();
+    const ticketsDir = path.join(__dirname, '../../../../../public/uploads/tickets');
+    if (!fs.existsSync(ticketsDir)) {
+      fs.mkdirSync(ticketsDir, { recursive: true });
+    }
+
+    // Resolve logo once for all ticket generations
+    let logoValue = settings.logo;
+    let logoPathOrBuffer = null;
+    if (logoValue) {
+      if (logoValue.startsWith('http')) {
+        try {
+          logoPathOrBuffer = await fetchImage(logoValue);
+        } catch (e) {
+          console.error('Failed to fetch remote logo:', e);
+        }
+      } else {
+        const localPath = path.join(process.cwd(), 'public', logoValue);
+        if (fs.existsSync(localPath)) {
+          logoPathOrBuffer = localPath;
+        }
+      }
+    }
+    if (!logoPathOrBuffer) {
+      const fallbackPath = path.join(process.cwd(), 'public', 'images', 'logo.png');
+      if (fs.existsSync(fallbackPath)) {
+        logoPathOrBuffer = fallbackPath;
+      }
+    }
+
+    const results = [];
+
+    // Send one email per recipient group with all attendee ticket PDFs attached
+    for (const [recipientEmail, group] of emailGroups.entries()) {
+      const { booking, attendees: groupAttendees } = group;
+      const groupAttachments = [];
+
+      for (const attendee of groupAttendees) {
+        const attBooking = attendee.bookingId || booking;
+        const ticketPath = path.join(ticketsDir, `ticket-${attendee._id}.pdf`);
+
+        await generateTicketPdf(ticketPath, {
+          attendee,
+          event: attendee.eventId,
+          booking: attBooking,
+          user: attBooking?.userId,
+          logoPathOrBuffer,
+          settings,
+        });
+
+        generatedTickets.push(ticketPath);
+        groupAttachments.push({
+          filename: `ticket-${attendee._id}.pdf`,
+          path: ticketPath,
+        });
+      }
+
+      const firstAttendee = groupAttendees[0];
+      const eventTitle = firstAttendee.eventId?.title || 'the Event';
+      const recipientName = booking?.billingInfo?.firstName
+        ? `${booking.billingInfo.firstName} ${booking.billingInfo.lastName || ''}`.trim()
+        : (booking?.userId?.name || firstAttendee.name || 'Valued Customer');
+
+      const isSingle = groupAttendees.length === 1;
+      const emailSubject = isSingle
+        ? `Your Event Ticket for ${eventTitle} - ${settings.title}`
+        : `Your Event Tickets (${groupAttendees.length}) for ${eventTitle} - ${settings.title}`;
+
+      const attendeeListHtml = groupAttendees
+        .map(
+          (a) =>
+            `<li style="margin-bottom: 4px;"><strong>${a.name || 'Attendee'}</strong> - ${a.ticketId?.ticketName || 'Ticket'}</li>`
+        )
+        .join('');
+
+      const emailBody = `
+        <p>Dear ${recipientName},</p>
+        <p>Please find attached your official event admission ${isSingle ? 'ticket' : `tickets (<strong>${groupAttendees.length}</strong> tickets)`} for <b>${eventTitle}</b>.</p>
+        <p><strong>Ticket Holder(s):</strong></p>
+        <ul style="color: #333; font-size: 14px;">
+          ${attendeeListHtml}
+        </ul>
+        <p>For any queries or assistance ${settings.supportEmail ? `<strong>Email:</strong> <a href="mailto:${settings.supportEmail}">${settings.supportEmail}</a>` : ''} ${settings.websiteUrl ? `<strong>Website:</strong> <a href="${settings.websiteUrl.startsWith('http') ? settings.websiteUrl : 'https://' + settings.websiteUrl}">${settings.websiteUrl}</a>` : ''}</p>
+        <p>Warm regards,<br/><strong>${settings.title}</strong></p>
+      `;
+
+      await emailService.sendEmail(recipientEmail, emailSubject, emailBody, groupAttachments);
+
+      results.push({
+        success: true,
+        email: recipientEmail,
+        ticketsSent: groupAttendees.length,
+        attendeeIds: groupAttendees.map((a) => a._id),
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Bulk tickets sent successfully in email',
+      totalTickets: attendees.length,
+      results,
+    });
+  } catch (error) {
+    logger.error('Error resending bulk tickets:', error);
+    if (res.headersSent) return;
+    return res.status(500).json({ success: false, message: 'Failed to send bulk tickets: ' + error.message });
+  } finally {
+    // Clean up all generated ticket PDF files immediately
+    for (const ticketPath of generatedTickets) {
+      if (ticketPath && fs.existsSync(ticketPath)) {
+        fs.unlink(ticketPath, (err) => {
+          if (err) console.error('Error deleting ticket PDF:', err);
+        });
+      }
+    }
+  }
+};
+
