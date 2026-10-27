@@ -859,6 +859,7 @@ module.exports = {
         <p>For any assistance or queries, please reach out to us:</p>
         <ul style="font-size: 13px; color: #555;">
           ${settings.supportEmail ? `<li><strong>Email:</strong> <a href="mailto:${settings.supportEmail}">${settings.supportEmail}</a></li>` : ''}
+          ${settings.contact ? `<li><strong>Phone:</strong> ${settings.contact}</li>` : ''}
           ${settings.websiteUrl ? `<li><strong>Website:</strong> <a href="${settings.websiteUrl.startsWith('http') ? settings.websiteUrl : 'https://' + settings.websiteUrl}">${settings.websiteUrl}</a></li>` : ''}
         </ul>
         <p>Warm regards,<br/><strong>${settings.title}</strong></p>
